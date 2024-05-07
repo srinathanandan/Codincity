@@ -1,0 +1,79 @@
+# Deploy to Azure Kubernetes Service
+# Build and push image to Azure Container Registry; Deploy to Azure Kubernetes Service
+# https://docs.microsoft.com/azure/devops/pipelines/languages/docker
+
+trigger:
+- master
+
+resources:
+- repo: self
+
+variables:
+
+  # Container registry service connection established during pipeline creation
+  dockerRegistryServiceConnection: '360f5931-7c6b-4a64-b76a-e9e555da1ba5'
+  imageRepository: 'frontend'
+  containerRegistry: 'codincityregistry.azurecr.io'
+  dockerfilePath: '**/Dockerfile'
+  tag: '$(Build.BuildId)'
+  imagePullSecret: 'codincityregistry531571bc-auth'
+
+  # Agent VM image name
+  vmImageName: 'ubuntu-latest'
+
+
+stages:
+- stage: Build
+  displayName: Build stage
+  jobs:
+  - job: Build
+    displayName: Build
+    pool:
+      vmImage: $(vmImageName)
+    steps:
+    - task: NodeTool@0
+      inputs:
+        versionSpec: '10.x'
+      displayName: 'Install Node.js'
+
+    - script: |
+        npm install
+        npm run build
+      displayName: 'npm install and build'
+      
+
+    - task: Docker@2
+      displayName: Build and push an image to container registry
+      inputs:
+        command: buildAndPush
+        repository: $(imageRepository)
+        dockerfile: $(dockerfilePath)
+        containerRegistry: $(dockerRegistryServiceConnection)
+        tags: |
+          $(tag)
+
+    - task: HelmInstaller@0
+      inputs:
+        helmVersion: '2.14.1'
+        installKubectl: true
+
+    - task: HelmDeploy@0
+      inputs:
+        command: 'package'
+        chartPath: '$(Build.SourcesDirectory)/frontend'
+    
+    
+    - upload: manifests
+      artifact: manifests
+
+    - task: HelmDeploy@0
+      inputs:
+        connectionType: 'Azure Resource Manager'
+        azureSubscription: 'Pay-As-You-Go(94ffa2fd-89c5-4345-98ab-1b59976607e1)'
+        azureResourceGroup: 'codincity-rg'
+        kubernetesCluster: 'codincityaks'
+        namespace: 'default'
+        command: 'install'
+        chartType: 'FilePath'
+        chartPath: '$(Build.ArtifactStagingDirectory)/frontend-0.1.0.tgz'
+        waitForExecution: false    
